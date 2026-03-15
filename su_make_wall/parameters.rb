@@ -29,12 +29,14 @@ module SuMakeWall
       default_t = (Constants::DEFAULT_THICKNESS / 1.mm).round.to_s
       default_j = Constants::DEFAULT_JUSTIFICATION.to_s
 
-      # defaults[2] をパイプ区切りにすると UI.inputbox がドロップダウンとして表示する。
-      # 先頭トークン "center" が初期選択値になる。
+      # UI.inputbox の第3引数に list 配列を渡すとドロップダウンになる。
+      # パイプ区切りの選択肢文字列を対応するインデックスに置く。
+      # 空文字列 "" の位置はテキスト入力のまま（高さ・厚みはフリー入力）。
       prompts  = ['高さ (mm)', '厚み (mm)', '基準線']
-      defaults = [default_h, default_t, 'center|left|right']
+      defaults = [default_h, default_t, default_j]
+      list     = ['', '', 'center|left|right']
 
-      input = UI.inputbox(prompts, defaults, 'MakeWall — パラメータ設定')
+      input = UI.inputbox(prompts, defaults, list, 'MakeWall — パラメータ設定')
       return nil unless input  # キャンセル
 
       height_mm    = [input[0].to_f, 1.0].max  # 最低 1mm

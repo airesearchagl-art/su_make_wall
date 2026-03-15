@@ -90,14 +90,19 @@ module SuMakeWall
 
       raw_pt = @ip_end.position
 
-      # 軸ロック中: 始点を通る軸への射影で終点を拘束する
-      @end_pt = (@lock_dir && @start_pt) ? raw_pt.project_to_line([@start_pt, @lock_dir]) : raw_pt
+      # 軸ロック中は始点を通るロック軸へ射影、それ以外はスナップ位置をそのまま使う
+      if @lock_dir && @start_pt
+        @end_pt = raw_pt.project_to_line([@start_pt, @lock_dir])
+      else
+        @end_pt = raw_pt
+      end
 
       view.tooltip = @ip_end.tooltip
       view.invalidate
     end
 
     # キー入力: ESC でキャンセル、矢印キーで軸ロック
+    # return true でキーイベントを消費し SketchUp のデフォルト動作を抑制する。
     def onKeyDown(key, _repeat, _flags, view)
       case key
       when VK_ESCAPE
@@ -107,30 +112,35 @@ module SuMakeWall
           Sketchup.active_model.select_tool(nil)
         end
         view.invalidate
+        return true
 
       when VK_RIGHT
         # 赤軸（X 軸）にロック
         @lock_dir = X_AXIS
         update_status_bar
         view.invalidate
+        return true
 
       when VK_LEFT
         # 緑軸（Y 軸）にロック
         @lock_dir = Y_AXIS
         update_status_bar
         view.invalidate
+        return true
 
       when VK_UP
         # 青軸（Z 軸）にロック（壁ツールでは稀だが完全性のため対応）
         @lock_dir = Z_AXIS
         update_status_bar
         view.invalidate
+        return true
 
       when VK_DOWN
         # 軸ロック解除
         @lock_dir = nil
         update_status_bar
         view.invalidate
+        return true
       end
     end
 
