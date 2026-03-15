@@ -4,7 +4,8 @@
 # main.rb — MakeWall Extension の初期化エントリーポイント
 #
 # su_make_wall.rb（ローダー）から SketchupExtension 経由でロードされる。
-# サブファイルの読み込み、メニュー登録、コンテキストメニュー登録を行う。
+# サブファイルの読み込み、UI::Command 作成、メニュー・コンテキストメニュー・
+# ツールバーの登録を行う。
 # =============================================================================
 
 require 'sketchup.rb'
@@ -27,19 +28,40 @@ module SuMakeWall
     Sketchup.active_model.select_tool(Tool.new(params))
   end
 
-  # ── メニュー & コンテキストメニューの登録 ───────────────────────────────────
-  # `unless @menus_registered` で二重登録を防ぐ。
+  # ── UI::Command・メニュー・ツールバーの登録 ─────────────────────────────────
+  # `unless @menus_registered` で二重登録を防ぐ（reload 対策）。
 
   unless @menus_registered
-    # 1. 拡張機能メニュー（Plugins > MakeWall）
-    plugins_menu = UI.menu('Plugins')
-    plugins_menu.add_item('MakeWall') { SuMakeWall.activate_tool }
+    # ── 1. UI::Command ────────────────────────────────────────────────────────
+    # メニュー、コンテキストメニュー、ツールバーの呼び出しを一本化する。
+    cmd = UI::Command.new('MakeWall') { SuMakeWall.activate_tool }
 
-    # 2. 右クリック コンテキストメニュー
+    cmd.tooltip         = 'MakeWall: 連続壁作成'
+    cmd.status_bar_text = 'クリックして連続壁描画ツールを起動します'
+    cmd.menu_text       = 'MakeWall'
+
+    # ── 2. アイコン ────────────────────────────────────────────────────────────
+    icon_path = File.join(__dir__, 'icons', 'makewall.png')
+    if File.exist?(icon_path)
+      cmd.small_icon = icon_path
+      cmd.large_icon = icon_path
+    end
+
+    # ── 3. Plugins メニュー ───────────────────────────────────────────────────
+    UI.menu('Plugins').add_item(cmd)
+
+    # ── 4. 右クリック コンテキストメニュー ───────────────────────────────────
     UI.add_context_menu_handler do |context_menu|
       context_menu.add_separator
-      context_menu.add_item('MakeWall') { SuMakeWall.activate_tool }
+      context_menu.add_item(cmd)
     end
+
+    # ── 5. ツールバー ─────────────────────────────────────────────────────────
+    toolbar = UI::Toolbar.new('MakeWall')
+    toolbar.add_item(cmd)
+    # restore: 前回の表示状態を復元。初回は非表示のため show を呼ぶ。
+    toolbar.restore
+    UI.start_timer(0.1, false) { toolbar.show } unless toolbar.get_last_state == TB_VISIBLE
 
     @menus_registered = true
   end
