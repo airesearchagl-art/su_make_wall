@@ -49,10 +49,10 @@ module SuMakeWall
         # 底面の Face を追加（法線が上向きになる反時計回り順）
         face = entities.add_face(data[:bottom])
 
-        # ── Step 2 時点では PushPull なし（2D の底面のみ） ──────────────────
-        # Step 3 で以下の 1 行を有効化する:
-        #   face.reverse! if face.normal.z < 0   # 法線を必ず上向きに正規化
-        #   face.pushpull(-@params.height)
+        # 法線を必ず上向き（+Z）に正規化してから押し出す。
+        # pushpull に負値を渡すことで法線方向（上）へ高さ分だけ押し出す。
+        face.reverse! if face.normal.z < 0
+        face.pushpull(-@params.height)
 
         model.commit_operation
         group

@@ -29,21 +29,18 @@ module SuMakeWall
       default_t = (Constants::DEFAULT_THICKNESS / 1.mm).round.to_s
       default_j = Constants::DEFAULT_JUSTIFICATION.to_s
 
-      prompts  = ['高さ (mm)', '厚み (mm)', '基準線 (center / left / right)']
-      defaults = [default_h, default_t, default_j]
+      # defaults[2] をパイプ区切りにすると UI.inputbox がドロップダウンとして表示する。
+      # 先頭トークン "center" が初期選択値になる。
+      prompts  = ['高さ (mm)', '厚み (mm)', '基準線']
+      defaults = [default_h, default_t, 'center|left|right']
 
       input = UI.inputbox(prompts, defaults, 'MakeWall — パラメータ設定')
       return nil unless input  # キャンセル
 
       height_mm    = [input[0].to_f, 1.0].max  # 最低 1mm
       thickness_mm = [input[1].to_f, 1.0].max
+      # ドロップダウンは "center" / "left" / "right" のいずれかのみ返すためバリデーション不要
       just_sym     = input[2].strip.downcase.to_sym
-
-      unless VALID_JUSTIFICATIONS.include?(just_sym)
-        UI.messagebox("基準線には center / left / right のいずれかを入力してください。\n" \
-                      "「#{input[2]}」は無効です。center を使用します。")
-        just_sym = :center
-      end
 
       new(
         height:        height_mm.mm,
