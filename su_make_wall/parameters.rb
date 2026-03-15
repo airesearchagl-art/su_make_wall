@@ -2,10 +2,12 @@
 
 module SuMakeWall
   # =============================================================================
-  # Parameters — 壁生成パラメータの保持とバリデーション
+  # Parameters — 壁生成パラメータの保持と単位変換
   #
-  # 現時点では UI.inputbox によるシンプルな入力を提供する。
-  # Step 6 で HtmlDialog に移行する際は from_inputbox を差し替えるだけでよい。
+  # Step 6 で HtmlDialog に移行したため from_inputbox を削除。
+  # UIDialog の update_param コールバックが set_*_mm / set_justification を呼ぶ。
+  # Tool は同じ Parameters オブジェクトへの参照を保持するため、
+  # UIDialog による変更は即座に Tool のプレビューにも反映される。
   # =============================================================================
   class Parameters
     VALID_JUSTIFICATIONS = %i[center left right].freeze
@@ -22,40 +24,40 @@ module SuMakeWall
       @justification = justification
     end
 
-    # UI.inputbox でパラメータを入力させる。キャンセル時は nil を返す。
-    def self.from_inputbox
-      # デフォルト値をミリメートル単位の文字列として表示する
-      default_h = (Constants::DEFAULT_HEIGHT    / 1.mm).round.to_s
-      default_t = (Constants::DEFAULT_THICKNESS / 1.mm).round.to_s
-      default_j = Constants::DEFAULT_JUSTIFICATION.to_s
+    # ── mm 単位での読み取り（HtmlDialog への初期値送信用） ────────────────────
 
-      # UI.inputbox の第3引数に list 配列を渡すとドロップダウンになる。
-      # パイプ区切りの選択肢文字列を対応するインデックスに置く。
-      # 空文字列 "" の位置はテキスト入力のまま（高さ・厚みはフリー入力）。
-      prompts  = ['高さ (mm)', '厚み (mm)', '基準線']
-      defaults = [default_h, default_t, default_j]
-      list     = ['', '', 'center|left|right']
-
-      input = UI.inputbox(prompts, defaults, list, 'MakeWall — パラメータ設定')
-      return nil unless input  # キャンセル
-
-      height_mm    = [input[0].to_f, 1.0].max  # 最低 1mm
-      thickness_mm = [input[1].to_f, 1.0].max
-      # ドロップダウンは "center" / "left" / "right" のいずれかのみ返すためバリデーション不要
-      just_sym     = input[2].strip.downcase.to_sym
-
-      new(
-        height:        height_mm.mm,
-        thickness:     thickness_mm.mm,
-        justification: just_sym
-      )
+    # 高さをミリメートル単位の整数で返す
+    def height_mm
+      (@height / 1.mm).round
     end
 
-    # デバッグ用の文字列表現
+    # 厚みをミリメートル単位の整数で返す
+    def thickness_mm
+      (@thickness / 1.mm).round
+    end
+
+    # ── mm 単位でのセット（UIDialog の update_param コールバックから呼ばれる） ──
+
+    # 高さを mm 値で設定する。1mm 未満はクランプ。
+    def set_height_mm(mm)
+      @height = [mm.to_f, 1.0].max.mm
+    end
+
+    # 厚みを mm 値で設定する。1mm 未満はクランプ。
+    def set_thickness_mm(mm)
+      @thickness = [mm.to_f, 1.0].max.mm
+    end
+
+    # 基準線を文字列で設定する。不正値は無視して現状維持。
+    def set_justification(str)
+      sym = str.to_s.strip.downcase.to_sym
+      @justification = sym if VALID_JUSTIFICATIONS.include?(sym)
+    end
+
+    # ── デバッグ用 ────────────────────────────────────────────────────────────
+
     def to_s
-      h_mm = (height    / 1.mm).round
-      t_mm = (thickness / 1.mm).round
-      "Parameters(height=#{h_mm}mm, thickness=#{t_mm}mm, justification=#{justification})"
+      "Parameters(height=#{height_mm}mm, thickness=#{thickness_mm}mm, justification=#{justification})"
     end
   end
 end

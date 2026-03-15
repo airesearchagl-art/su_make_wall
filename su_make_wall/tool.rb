@@ -12,6 +12,7 @@ module SuMakeWall
   #
   # Step 3: PushPull による 3D 壁の生成（WallBuilder で有効化済み）
   # Step 5: VCB（onUserText）による数値指定・矢印キーによる軸ロック
+  # Step 6: UIDialog によるモードレスパラメータ設定
   # =============================================================================
   class Tool
     # ── 状態定数 ──────────────────────────────────────────────────────────────
@@ -34,10 +35,16 @@ module SuMakeWall
     # ── Sketchup::Tool コールバック（公開） ───────────────────────────────────
 
     def activate
+      # UIDialog を表示（または前面に移動）し、@params オブジェクトを紐づける。
+      # Tool と UIDialog は同じ Parameters インスタンスを共有するため、
+      # ダイアログでの変更は次の draw() 呼び出しに即座に反映される。
+      UIDialog.show(@params)
       update_status_bar
     end
 
     def deactivate(view)
+      # ダイアログはモードレスなので閉じない。
+      # ユーザーが × ボタンで閉じた場合は UIDialog 側でインスタンスをリセット済み。
       view.invalidate
     end
 

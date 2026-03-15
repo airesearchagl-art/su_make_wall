@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MakeWall</title>
+<style>
+/* ── リセット & ベース ────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  background: #ececec;
+  color: #1e1e1e;
+  padding: 10px 12px 12px;
+  /* SketchUp HtmlDialog でスクロールバーが出ないよう overflow を抑制 */
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ── パネルタイトル ─────────────────────────────────────────── */
+.panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-bottom: 7px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid #c8c8c8;
+}
+
+/* ── 各パラメータ行 ──────────────────────────────────────────── */
+.row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.row:last-child { margin-bottom: 0; }
+
+label {
+  width: 52px;
+  flex-shrink: 0;
+  color: #444;
+  font-size: 12px;
+  cursor: default;
+}
+
+/* ── テキスト/数値入力 ────────────────────────────────────────── */
+input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid #b0b0b0;
+  border-radius: 2px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  color: #1e1e1e;
+  outline: none;
+  /* Chrome の spinner を非表示にしない（mm 入力に便利） */
+}
+input[type="number"]:focus {
+  border-color: #0078d4;
+  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.20);
+}
+/* 無効な値（マイナスなど）の視覚フィードバック */
+input[type="number"]:invalid {
+  border-color: #c0392b;
+}
+
+/* ── セレクトボックス ──────────────────────────────────────────── */
+select {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid #b0b0b0;
+  border-radius: 2px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  color: #1e1e1e;
+  outline: none;
+  appearance: auto;
+  cursor: pointer;
+}
+select:focus {
+  border-color: #0078d4;
+  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.20);
+}
+
+/* ── 単位ラベル ──────────────────────────────────────────────── */
+.unit {
+  width: 22px;
+  flex-shrink: 0;
+  padding-left: 4px;
+  color: #888;
+  font-size: 11px;
+}
+</style>
+</head>
+<body>
+
+<div class="panel-title">MakeWall パラメータ</div>
+
+<!-- 高さ -->
+<div class="row">
+  <label for="inp-height">高さ</label>
+  <input type="number" id="inp-height" min="1" max="99999" step="50" value="2400">
+  <span class="unit">mm</span>
+</div>
+
+<!-- 厚み -->
+<div class="row">
+  <label for="inp-thickness">厚み</label>
+  <input type="number" id="inp-thickness" min="1" max="9999" step="10" value="150">
+  <span class="unit">mm</span>
+</div>
+
+<!-- 基準線 -->
+<div class="row">
+  <label for="inp-justification">基準線</label>
+  <select id="inp-justification">
+    <option value="center">中心 (center)</option>
+    <option value="left">左端 (left)</option>
+    <option value="right">右端 (right)</option>
+  </select>
+  <span class="unit"></span>
+</div>
+
+<script>
+'use strict';
+
+/* ── Ruby ← JS: パラメータ変更を通知 ────────────────────────── */
+function sendParam(key, value) {
+  if (typeof sketchup !== 'undefined') {
+    sketchup.update_param(key, String(value));
+  }
+}
+
+/* 数値フィールド: Enter / フォーカスアウト（change）で送信 */
+document.getElementById('inp-height').addEventListener('change', function () {
+  var v = parseFloat(this.value);
+  if (!isNaN(v) && v >= 1) {
+    sendParam('height', v);
+  } else {
+    this.value = '2400'; /* 不正値をリセット */
+  }
+});
+
+document.getElementById('inp-thickness').addEventListener('change', function () {
+  var v = parseFloat(this.value);
+  if (!isNaN(v) && v >= 1) {
+    sendParam('thickness', v);
+  } else {
+    this.value = '150';
+  }
+});
+
+/* セレクト: 選択直後（change）で即送信 */
+document.getElementById('inp-justification').addEventListener('change', function () {
+  sendParam('justification', this.value);
+});
+
+/* ── JS ← Ruby: 初期値 / 外部更新を受け取る ─────────────────── */
+/**
+ * Ruby 側から呼び出す。
+ * @param {Object} params  { height: number, thickness: number, justification: string }
+ */
+function updateFromRuby(params) {
+  if (params.height != null) {
+    document.getElementById('inp-height').value = params.height;
+  }
+  if (params.thickness != null) {
+    document.getElementById('inp-thickness').value = params.thickness;
+  }
+  if (params.justification != null) {
+    document.getElementById('inp-justification').value = params.justification;
+  }
+}
+
+/* ── 準備完了を Ruby へ通知（全要素が確定してから） ─────────── */
+if (typeof sketchup !== 'undefined') {
+  sketchup.ready();
+}
+</script>
+</body>
+</html>
