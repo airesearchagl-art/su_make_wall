@@ -143,24 +143,83 @@ function sendParam(key, value) {
   }
 }
 
-/* 数値フィールド: Enter / フォーカスアウト（change）で送信 */
-document.getElementById('inp-height').addEventListener('change', function () {
-  var v = parseFloat(this.value);
-  if (!isNaN(v) && v >= 1) {
-    sendParam('height', v);
-  } else {
-    this.value = '2400'; /* 不正値をリセット */
-  }
-});
+/* ── 数値入力カスタムステップロジック ───────────────────────────
+ *
+ * 問題の背景:
+ *   min="1" step="50" のとき、ブラウザの有効値シーケンスは
+ *   1, 51, 101, ..., 2351, 2401, 2451, ... となる。
+ *   2400 はシーケンス外のため、スピンボタン最初のクリックが
+ *   最寄り有効値（2401）に補正され、見かけ上 1 刻みになってしまう。
+ *
+ * 解決策:
+ *   ① keydown ArrowUp/Down → preventDefault() + step 刻みで手動増減
+ *   ② input イベント（スピンボタン）→ delta ≤ step ならスピン操作と
+ *      みなして prev ± step に補正（prev は確定値のキャッシュ）
+ *   ③ change（Enter/blur）→ 手動入力を確定してそのまま送信
+ *   ④ setupStepInput が返す setter で updateFromRuby から prev を同期
+ *
+ * @param {string} id        入力要素の id
+ * @param {string} paramKey  Ruby に送るキー名
+ * @param {number} fallback  不正値リセット時のデフォルト値
+ * @returns {Function}  val を受け取り el.value と prev を同期する setter
+ */
+function setupStepInput(id, paramKey, fallback) {
+  var el   = document.getElementById(id);
+  var step = parseFloat(el.getAttribute('step')) || 1;
+  var min  = parseFloat(el.getAttribute('min'))  || 1;
+  var prev = parseFloat(el.value) || fallback;   /* 最後に確定した値 */
 
-document.getElementById('inp-thickness').addEventListener('change', function () {
-  var v = parseFloat(this.value);
-  if (!isNaN(v) && v >= 1) {
-    sendParam('thickness', v);
-  } else {
-    this.value = '150';
-  }
-});
+  /* ① キーボード ArrowUp/Down ─────────────────────────────────── */
+  el.addEventListener('keydown', function (e) {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();                          /* ブラウザ既定動作をキャンセル */
+    var next = prev + (e.key === 'ArrowUp' ? step : -step);
+    next = Math.max(min, next);
+    this.value = next;                           /* 値のセット（input は発火しない）*/
+    prev = next;
+    sendParam(paramKey, next);
+  });
+
+  /* ② スピンボタンクリック ────────────────────────────────────── */
+  el.addEventListener('input', function () {
+    var cur = parseFloat(this.value);
+    if (isNaN(cur)) return;
+    var delta = Math.abs(cur - prev);
+    /*
+     * delta <= step : スピンボタン操作（ブラウザが 1 刻みで動いた）→ 補正
+     * delta >  step : 手動入力中（大きな変化）→ change イベントに委ねる
+     */
+    if (delta > 0 && delta <= step) {
+      var dir  = cur >= prev ? 1 : -1;
+      var next = prev + dir * step;
+      next = Math.max(min, next);
+      this.value = next;
+      prev = next;
+      sendParam(paramKey, next);
+    }
+  });
+
+  /* ③ Enter / フォーカスアウト（手動入力を確定） ─────────────── */
+  el.addEventListener('change', function () {
+    var v = parseFloat(this.value);
+    if (!isNaN(v) && v >= min) {
+      prev = v;
+      sendParam(paramKey, v);
+    } else {
+      this.value = prev;                         /* 不正値はリセット */
+    }
+  });
+
+  /* ④ updateFromRuby から prev を同期するための setter ────────── */
+  return function (val) {
+    el.value = val;
+    prev = parseFloat(val) || fallback;
+  };
+}
+
+/* 数値入力フィールドの初期化 */
+var setHeight    = setupStepInput('inp-height',    'height',    2400);
+var setThickness = setupStepInput('inp-thickness', 'thickness', 150);
 
 /* セレクト: 選択直後（change）で即送信 */
 document.getElementById('inp-justification').addEventListener('change', function () {
@@ -173,12 +232,8 @@ document.getElementById('inp-justification').addEventListener('change', function
  * @param {Object} params  { height: number, thickness: number, justification: string }
  */
 function updateFromRuby(params) {
-  if (params.height != null) {
-    document.getElementById('inp-height').value = params.height;
-  }
-  if (params.thickness != null) {
-    document.getElementById('inp-thickness').value = params.thickness;
-  }
+  if (params.height        != null) setHeight(params.height);
+  if (params.thickness     != null) setThickness(params.thickness);
   if (params.justification != null) {
     document.getElementById('inp-justification').value = params.justification;
   }
