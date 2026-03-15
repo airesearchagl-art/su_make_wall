@@ -30,6 +30,10 @@ module SuMakeWall
       @ip_end     = Sketchup::InputPoint.new
       @lock_dir   = nil   # Geom::Vector3d または nil — 軸ロック中の方向
       @vcb_length = nil   # Float または nil — 最後の VCB 入力値（内部単位）
+      # Step 7: マイター処理に必要な直前壁の情報
+      @prev_group = nil   # Sketchup::Group — 直前の壁グループ（終点修正対象）
+      @prev_dir   = nil   # Geom::Vector3d — 直前の壁の進行方向（正規化済み）
+      @prev_data  = nil   # Hash{bottom:,top:} — 直前の壁の頂点データ（終点識別用）
     end
 
     # ── Sketchup::Tool コールバック（公開） ───────────────────────────────────
@@ -245,8 +249,41 @@ module SuMakeWall
     # ── 壁の確定 ──────────────────────────────────────────────────────────────
 
     def commit_wall(pt1, pt2)
-      group = WallBuilder.new(@params).build(pt1, pt2)
-      Sketchup.status_text = '壁の長さが短すぎます。別の点をクリックしてください。' if group.nil?
+      builder = WallBuilder.new(@params)
+
+      # Step 7: 直前の壁が有効かつデータがある場合はマイター処理を試みる。
+      # @prev_group.valid? で Undo 後に削除されたグループを安全に検出する。
+      prev_valid = @prev_group &&
+                   @prev_group.respond_to?(:valid?) &&
+                   @prev_group.valid? &&
+                   @prev_dir &&
+                   @prev_data
+
+      group = if prev_valid
+                builder.build_mitered(
+                  pt1, pt2,
+                  prev_group: @prev_group,
+                  prev_dir:   @prev_dir,
+                  prev_data:  @prev_data
+                )
+              else
+                builder.build(pt1, pt2)
+              end
+
+      if group.nil?
+        Sketchup.status_text = '壁の長さが短すぎます。別の点をクリックしてください。'
+        # 生成失敗時も prev_* をクリアして次のトライをフレッシュに
+        @prev_group = nil
+        @prev_dir   = nil
+        @prev_data  = nil
+        return nil
+      end
+
+      # 次のマイター処理のために今回の壁データを保存
+      @prev_group = group
+      @prev_dir   = Geom::Vector3d.new(pt2.x - pt1.x, pt2.y - pt1.y, 0.0).normalize
+      @prev_data  = builder.vertices_hash(pt1, pt2)   # 終点頂点の位置識別に使用
+
       group
     end
 
@@ -273,8 +310,9 @@ module SuMakeWall
       # 軸ロック中: ロック方向の延長線を軸の色で描画する
       draw_lock_axis(view) if @lock_dir && @start_pt
 
-      # ── Step 4 で追加: コーナー端部の赤ハイライト ──────────────────────────
-      # draw_trim_highlight(view, data[:bottom], data[:top]) if @prev_dir && data
+      # Step 7: 連続描画中（前の壁がある）は始点端を赤くハイライトして
+      # 「ここがマイター処理で変形します」をユーザーに事前に伝える
+      draw_trim_highlight(view, data[:bottom], data[:top]) if @prev_dir && data
     end
 
     # 軸ロック中の延長線を軸色で描く
@@ -296,6 +334,22 @@ module SuMakeWall
       view.line_width    = 1
       view.drawing_color = axis_color
       view.draw(GL_LINES, [@start_pt, far_pt])
+    end
+
+    # Step 7: コーナー端部（始点側）の赤ハイライト描画
+    # 「この2辺がマイター処理で変形する」ことをプレビュー中に視覚的に伝える。
+    # 底面始点2頂点（v0, v3）と上面始点2頂点（t0, t3）で囲まれた端面を赤で強調する。
+    def draw_trim_highlight(view, bottom, top)
+      # 始点端面の4頂点: 底・左 → 上・左 → 上・右 → 底・右
+      trim_face = [bottom[0], top[0], top[3], bottom[3]]
+
+      view.line_width    = 3
+      view.drawing_color = Constants::PREVIEW_COLOR_TRIM
+      view.draw(GL_LINE_LOOP, trim_face)
+
+      # 対角線2本を追加してより目立たせる（× 印）
+      view.draw(GL_LINES, [bottom[0], top[3]])
+      view.draw(GL_LINES, [top[0],    bottom[3]])
     end
 
     # ── VCB 入力パース ─────────────────────────────────────────────────────────
@@ -324,6 +378,9 @@ module SuMakeWall
       @end_pt     = nil
       @lock_dir   = nil
       @vcb_length = nil
+      @prev_group = nil   # マイター履歴をクリア
+      @prev_dir   = nil
+      @prev_data  = nil
       update_status_bar
     end
 
