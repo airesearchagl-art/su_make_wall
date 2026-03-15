@@ -34,6 +34,11 @@ module SuMakeWall
       @prev_group = nil   # Sketchup::Group — 直前の壁グループ（終点修正対象）
       @prev_dir   = nil   # Geom::Vector3d — 直前の壁の進行方向（正規化済み）
       @prev_data  = nil   # Hash{bottom:,top:} — 直前の壁の頂点データ（終点識別用）
+      # Step 7 ループ閉合: 最初の壁の情報（閉合マイター処理に使用）
+      @first_start_pt   = nil  # Geom::Point3d — 連続描画の最初の始点
+      @first_wall_group = nil  # Sketchup::Group — 最初の壁グループ
+      @first_dir        = nil  # Geom::Vector3d — 最初の壁の進行方向
+      @first_data       = nil  # Hash{bottom:,top:} — 最初の壁の頂点データ
     end
 
     # ── Sketchup::Tool コールバック（公開） ───────────────────────────────────
@@ -68,7 +73,8 @@ module SuMakeWall
 
       case @state
       when STATE_IDLE
-        @start_pt = pt
+        @start_pt       = pt
+        @first_start_pt = pt   # ループ閉合判定用に最初の始点を記憶
         @ip_start.copy!(@ip_end)
         @state = STATE_DRAWING
         update_status_bar
@@ -76,9 +82,12 @@ module SuMakeWall
       when STATE_DRAWING
         unless pt == @start_pt
           commit_wall(@start_pt, pt)
-          # 連続描画: 終点を次の始点にする
-          @start_pt = pt
-          @ip_start.copy!(@ip_end)
+          # ループが閉じた場合は commit_wall 内で reset_to_idle が呼ばれ
+          # @state が STATE_IDLE になるため、ここでは @state を確認してから続ける
+          if @state == STATE_DRAWING
+            @start_pt = pt
+            @ip_start.copy!(@ip_end)
+          end
         end
       end
 
@@ -216,10 +225,13 @@ module SuMakeWall
 
       commit_wall(@start_pt, computed_end)
 
-      # 連続描画: 確定した終点を次の始点にする
-      @start_pt = computed_end
-      @ip_start = Sketchup::InputPoint.new(computed_end)
-      @end_pt   = computed_end
+      # ループが閉じた場合は commit_wall 内で reset_to_idle が呼ばれるため
+      # @state を確認してから連続描画用の状態を更新する
+      if @state == STATE_DRAWING
+        @start_pt = computed_end
+        @ip_start = Sketchup::InputPoint.new(computed_end)
+        @end_pt   = computed_end
+      end
 
       update_status_bar
       view.invalidate
@@ -248,41 +260,76 @@ module SuMakeWall
 
     # ── 壁の確定 ──────────────────────────────────────────────────────────────
 
+    # ループが閉じたと判定する許容距離（SketchUp のスナップで通常は 0 に近い）
+    LOOP_CLOSE_TOLERANCE = 1.mm
+
     def commit_wall(pt1, pt2)
       builder = WallBuilder.new(@params)
 
       # Step 7: 直前の壁が有効かつデータがある場合はマイター処理を試みる。
-      # @prev_group.valid? で Undo 後に削除されたグループを安全に検出する。
       prev_valid = @prev_group &&
                    @prev_group.respond_to?(:valid?) &&
                    @prev_group.valid? &&
                    @prev_dir &&
                    @prev_data
 
-      group = if prev_valid
+      # ループ閉合の判定: 終点が最初の始点に一致し、最初の壁が存在する場合
+      closing_loop = @first_start_pt &&
+                     @first_wall_group &&
+                     @first_wall_group.respond_to?(:valid?) &&
+                     @first_wall_group.valid? &&
+                     pt2.distance(@first_start_pt) < LOOP_CLOSE_TOLERANCE
+
+      # ループ閉合時は終点を厳密に最初の始点にスナップする
+      snapped_pt2 = closing_loop ? @first_start_pt : pt2
+
+      group = if closing_loop && prev_valid
+                # ループ閉合マイター: 前の壁の終点 + 最初の壁の始点を同時に処理
+                builder.build_mitered_closing(
+                  pt1, snapped_pt2,
+                  prev_group:  @prev_group,
+                  prev_dir:    @prev_dir,
+                  prev_data:   @prev_data,
+                  first_group: @first_wall_group,
+                  first_dir:   @first_dir,
+                  first_data:  @first_data
+                )
+              elsif prev_valid
                 builder.build_mitered(
-                  pt1, pt2,
+                  pt1, snapped_pt2,
                   prev_group: @prev_group,
                   prev_dir:   @prev_dir,
                   prev_data:  @prev_data
                 )
               else
-                builder.build(pt1, pt2)
+                builder.build(pt1, snapped_pt2)
               end
 
       if group.nil?
         Sketchup.status_text = '壁の長さが短すぎます。別の点をクリックしてください。'
-        # 生成失敗時も prev_* をクリアして次のトライをフレッシュに
         @prev_group = nil
         @prev_dir   = nil
         @prev_data  = nil
         return nil
       end
 
+      # ループが閉じた場合は描画を終了してリセット
+      if closing_loop
+        reset_to_idle
+        return group
+      end
+
       # 次のマイター処理のために今回の壁データを保存
       @prev_group = group
       @prev_dir   = Geom::Vector3d.new(pt2.x - pt1.x, pt2.y - pt1.y, 0.0).normalize
-      @prev_data  = builder.vertices_hash(pt1, pt2)   # 終点頂点の位置識別に使用
+      @prev_data  = builder.vertices_hash(pt1, pt2)
+
+      # 最初の壁の記録（連続描画開始後の1本目のみ）
+      if @first_wall_group.nil?
+        @first_wall_group = group
+        @first_dir        = @prev_dir
+        @first_data       = @prev_data
+      end
 
       group
     end
@@ -381,6 +428,10 @@ module SuMakeWall
       @prev_group = nil   # マイター履歴をクリア
       @prev_dir   = nil
       @prev_data  = nil
+      @first_start_pt   = nil  # ループ閉合情報をクリア
+      @first_wall_group = nil
+      @first_dir        = nil
+      @first_data       = nil
       update_status_bar
     end
 

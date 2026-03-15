@@ -104,6 +104,52 @@ module SuMakeWall
       end
     end
 
+    # ループを閉じる最後の壁を生成する。
+    # 1. 前の壁（prev_group）の終点をマイター処理（通常の build_mitered と同じ）。
+    # 2. 最後の壁をマイター済み始点・終点で生成。
+    # 3. 最初の壁（first_group）の始点をマイター処理して図形を閉合させる。
+    # 3操作すべて1つの Operation に包まれるため Undo が1ステップで済む。
+    #
+    # @return [Sketchup::Group, nil]
+    def build_mitered_closing(pt1, pt2,
+                              prev_group:,  prev_dir:,  prev_data:,
+                              first_group:, first_dir:, first_data:)
+      curr_data = vertices_hash(pt1, pt2)
+      return nil unless curr_data
+
+      last_dir = Geom::Vector3d.new(pt2.x - pt1.x, pt2.y - pt1.y, 0.0)
+      return nil if last_dir.length < Constants::MIN_WALL_LENGTH
+
+      last_dir.normalize!
+
+      # pt1 でのマイター: 前の壁 ↔ 最後の壁
+      miter_start = compute_miter_vertices(pt1, prev_dir, last_dir, prev_data, curr_data)
+
+      # pt2（= first_start_pt）でのマイター: 最後の壁 ↔ 最初の壁
+      # curr_data の終点側（index 1,2）と first_data の始点側（index 0,3）が交わる
+      miter_end = compute_miter_vertices(pt2, last_dir, first_dir, curr_data, first_data)
+
+      # 最後の壁の4底面頂点をマイター適用済みで組み立てる
+      start_left  = miter_start ? miter_start[:left_b]  : curr_data[:bottom][0]
+      start_right = miter_start ? miter_start[:right_b] : curr_data[:bottom][3]
+      end_left    = miter_end   ? miter_end[:left_b]    : curr_data[:bottom][1]
+      end_right   = miter_end   ? miter_end[:right_b]   : curr_data[:bottom][2]
+      bottom      = [start_left, end_left, end_right, start_right]
+
+      model = Sketchup.active_model
+      model.start_operation('Make Wall', true)
+      begin
+        fix_wall_end(prev_group, prev_data, miter_start)   if miter_start
+        group = add_wall_group(bottom)
+        fix_wall_start(first_group, first_data, miter_end) if miter_end
+        model.commit_operation
+        group
+      rescue => e
+        model.abort_operation
+        raise e
+      end
+    end
+
     # プレビュー用に頂点データのみを返す（ジオメトリ生成なし）。
     # @return [Hash{bottom:, top:}, nil]
     def self.preview_vertices(pt1, pt2, params)
@@ -150,7 +196,7 @@ module SuMakeWall
       entities = group.entities
       face     = entities.add_face(bottom_pts)
       face.reverse! if face.normal.z < 0
-      face.pushpull(-@params.height)
+      face.pushpull(@params.height)
       group
     end
 
@@ -225,6 +271,36 @@ module SuMakeWall
 
         delta = new_pt - vert.position
         next if delta.length < MITER_DET_EPSILON   # すでに正しい位置
+
+        entities.transform_entities(
+          Geom::Transformation.translation(delta),
+          [vert]
+        )
+      end
+    end
+
+    # first_group の始点側4頂点（底・上それぞれ左右）を miter 頂点位置へ移動する。
+    # ループ閉合時に最初の壁の始点コーナーを斜めカットするために使用。
+    def fix_wall_start(group, data, miter)
+      return unless group.respond_to?(:valid?) && group.valid?
+
+      entities  = group.entities
+      all_verts = entities.grep(Sketchup::Edge).flat_map(&:vertices).uniq
+
+      moves = {
+        data[:bottom][0] => miter[:left_b],
+        data[:bottom][3] => miter[:right_b],
+        data[:top][0]    => miter[:left_t],
+        data[:top][3]    => miter[:right_t]
+      }
+
+      moves.each do |old_pt, new_pt|
+        vert = all_verts.min_by { |v| v.position.distance(old_pt) }
+        next unless vert
+        next if vert.position.distance(old_pt) > VERTEX_SNAP_TOL
+
+        delta = new_pt - vert.position
+        next if delta.length < MITER_DET_EPSILON
 
         entities.transform_entities(
           Geom::Transformation.translation(delta),
